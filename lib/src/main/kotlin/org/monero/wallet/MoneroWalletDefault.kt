@@ -21,7 +21,7 @@ import org.monero.common.MoneroTxWallet
 
 abstract class MoneroWalletDefault : MoneroWallet {
     protected var listeners: MutableSet<MoneroWalletListener> = mutableSetOf()
-    protected var isClosed: Boolean = false
+    protected var closed: Boolean = false
 
     protected fun normalizeTransferQuery(query: MoneroTransferQuery?): MoneroTransferQuery {
         var q = query
@@ -319,7 +319,7 @@ abstract class MoneroWalletDefault : MoneroWallet {
         return relayTx(tx.metadata)
     }
 
-    override fun relayTxs(txs: List<MoneroTxWallet>): List<String> {
+    override fun relayTxs(txs: Collection<MoneroTxWallet>): List<String> {
         val txHexes = ArrayList<String>()
         for (tx in txs) {
             txHexes.add(tx.metadata)
@@ -369,11 +369,11 @@ abstract class MoneroWalletDefault : MoneroWallet {
 
     override fun close(save: Boolean) {
         listeners.clear()
-        isClosed = true
+        closed = true
     }
 
     override fun isClosed(): Boolean {
-        return isClosed
+        return closed
     }
 
 }

@@ -114,7 +114,7 @@ interface MoneroWallet {
     fun sweepDust(relay: Boolean): List<MoneroTxWallet>
     fun relayTx(txMetadata: String): String
     fun relayTx(tx: MoneroTxWallet): String
-    fun relayTxs(txs: List<MoneroTxWallet>): List<String>
+    fun relayTxs(txs: Collection<MoneroTxWallet>): List<String>
     fun relayTxs(txMetadata: List<String>): List<String>
     fun describeUnsignedTxSet(unsignedTxHex: String): MoneroTxSet
     fun describeMultisigTxSet(multisigTxHex: String): MoneroTxSet
