@@ -1,10 +1,15 @@
 package monero.internal
 
 import com.fasterxml.jackson.core.type.TypeReference
+import com.sun.jna.FromNativeContext
+import com.sun.jna.FromNativeConverter
 import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import com.sun.jna.ToNativeContext
+import com.sun.jna.ToNativeConverter
+import com.sun.jna.TypeMapper
 import com.sun.jna.ptr.IntByReference
 import com.sun.jna.ptr.PointerByReference
 import java.math.BigInteger
@@ -57,7 +62,7 @@ internal object MoneroNative {
     private fun load(): MoneroC {
         val path = System.getProperty(LIBRARY_PROPERTY) ?: System.getenv(LIBRARY_ENVIRONMENT) ?: "monero_c"
         try {
-            return Native.load(path, MoneroC::class.java, mapOf(Library.OPTION_STRING_ENCODING to ENCODING))
+            return Native.load(path, MoneroC::class.java, mapOf(Library.OPTION_STRING_ENCODING to ENCODING, Library.OPTION_TYPE_MAPPER to BooleanTypeMapper()))
         } catch (e: UnsatisfiedLinkError) {
             throw MoneroError("The native library monero_c is not found, or it can not be loaded. Set the system property $LIBRARY_PROPERTY or the environment variable $LIBRARY_ENVIRONMENT to its path, or put it in the library path: ${e.message}", e)
         }
@@ -178,5 +183,43 @@ internal object MoneroNative {
         val value = if (Native.SIZE_T_SIZE == 8) count.getLong(0) else count.getInt(0).toLong() and 0xffffffffL
         if (value < 0 || value > Int.MAX_VALUE) throw MoneroError("monero-c returned an array that is too big: $value")
         return value.toInt()
+    }
+}
+
+/**
+ * Maps a Boolean of the declarations of MoneroC to the one byte of a C bool, and the byte back to a Boolean. JNA
+ * marshals a Boolean as a 32-bit number without the mapping: a parameter that is true arrives as 0xff in the byte of
+ * a C bool, which C99 defines to hold only 0 or 1, and a return is read as all the 32 bits of the register, whose
+ * high ones the ABI of x86-64 leaves undefined when a bool is returned in AL.
+ */
+internal class BooleanTypeMapper : TypeMapper {
+
+    override fun getFromNativeConverter(type: Class<*>): FromNativeConverter? {
+        return if (type == Boolean::class.java || type == Boolean::class.javaObjectType) FROM_NATIVE else null
+    }
+
+    override fun getToNativeConverter(type: Class<*>): ToNativeConverter? {
+        return if (type == Boolean::class.java || type == Boolean::class.javaObjectType) TO_NATIVE else null
+    }
+
+    private companion object {
+
+        val FROM_NATIVE = object : FromNativeConverter {
+
+            override fun nativeType(): Class<*> = Byte::class.javaObjectType
+
+            override fun fromNative(nativeValue: Any?, context: FromNativeContext?): Boolean {
+                return (nativeValue as Number).toInt() != 0
+            }
+        }
+
+        val TO_NATIVE = object : ToNativeConverter {
+
+            override fun nativeType(): Class<*> = Byte::class.javaObjectType
+
+            override fun toNative(value: Any?, context: ToNativeContext?): Byte {
+                return if (value as Boolean) 1 else 0
+            }
+        }
     }
 }
