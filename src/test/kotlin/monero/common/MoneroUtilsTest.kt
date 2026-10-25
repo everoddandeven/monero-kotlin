@@ -1,22 +1,33 @@
 package monero.common
 
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+import com.sun.jna.ptr.PointerByReference
+import java.io.File
+import java.io.IOException
 import java.math.BigInteger
 import monero.ModelTestSupport
 import monero.NativeTestSupport
 import monero.daemon.model.MoneroBlock
 import monero.daemon.model.MoneroNetworkType
+import monero.internal.MoneroNative
+import monero.internal.SizeT
 import monero.wallet.model.MoneroIncomingTransfer
 import monero.wallet.model.MoneroOutputWallet
 import monero.wallet.model.MoneroTxConfig
 import monero.wallet.model.MoneroTxWallet
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * Monero utilities unit tests.
@@ -117,6 +128,35 @@ class MoneroUtilsTest {
         assertTrue(binary.isNotEmpty())
 
         assertEquals(jsonMap, MoneroUtils.binaryToDict(binary))
+    }
+
+    // Can serialize text that is not ASCII, which crosses the bridge as UTF-8: a binding that falls back to the
+    // charset of the platform mangles it silently
+    @Test
+    fun testSerializeNonAsciiText() {
+        for (text in listOf("héllo wörld", "日本語のシード", "emoji 😀 and symbols ✓✗")) {
+            val jsonMap = mapOf("msg" to text)
+            val binary = MoneroUtils.dictToBinary(jsonMap)
+            assertTrue(binary.isNotEmpty())
+
+            assertEquals(jsonMap, MoneroUtils.binaryToDict(binary))
+        }
+    }
+
+    // The binary form is the wire format of the binary RPC of a daemon, which a round trip with itself cannot pin:
+    // a codec that is wrong the same way twice passes it. The bytes that monero-c writes for a fixed map, which
+    // are the ones that python's dict_to_binary() produces for the same one, are checked in as a fixture, and must
+    // come out of dictToBinary() exactly
+    @Test
+    fun testBinaryFormMatchesTheGoldenVector() {
+        val jsonMap = mapOf("heights" to listOf(111, 222, 333))
+        val url = MoneroUtilsTest::class.java.getResource("/fixtures/utils/heights.bin") ?: fail("No fixture utils/heights.bin")
+        val golden = File(url.toURI()).readBytes()
+
+        assertContentEquals(golden, MoneroUtils.dictToBinary(jsonMap))
+
+        // and the golden vector decodes back to the map it was made from
+        assertEquals(jsonMap, MoneroUtils.binaryToDict(golden))
     }
 
     // Can validate addresses
@@ -446,7 +486,14 @@ class MoneroUtilsTest {
 
         val safelyBelow = boundaryXmr - marginXmr
         val below = MoneroUtils.xmrToAtomicUnits(safelyBelow)
-        assertTrue(below <= uint64Max, "xmrToAtomicUnits($safelyBelow) == $below, uint64Max = $uint64Max")
+        // two-sided: the atomic units are an unsigned 64-bit number, which a signed reading of the same 64 bits is
+        // not, since the near-boundary amounts are bigger than Long.MAX_VALUE
+        assertTrue(below >= BigInteger.ZERO && below <= uint64Max, "xmrToAtomicUnits($safelyBelow) == $below, expected an unsigned 64-bit number")
+
+        // an exact value above 2^63 pins the unsigned interpretation: the 64 bits of 18446744000000000000 read as
+        // the negative -73709551616 when they are read as a signed long. 18446744.0 and 1e12 are exact as doubles,
+        // and their product needs only 50 bits of mantissa, so every platform computes the same value
+        assertEquals(BigInteger("18446744000000000000"), MoneroUtils.xmrToAtomicUnits(18446744.0))
 
         val safelyAbove = boundaryXmr + marginXmr
         val e = assertFailsWith<MoneroError> { MoneroUtils.xmrToAtomicUnits(safelyAbove) }
@@ -883,7 +930,95 @@ class MoneroUtilsTest {
     }
 
     // The free() region of the python tests, including its RSS leak test, is not mirrored: free() exists only to break
-    // the shared_ptr cycles of boost::python, which the garbage collector of the JVM reclaims on its own.
+    // the shared_ptr cycles of boost::python, which the garbage collector of the JVM reclaims on its own. The
+    // native side of this bridge is a different matter: monero-c allocates the binary and the JSON of every
+    // serialization, and only monero_utils_free() gives that memory back, so the two tests below watch what the
+    // python RSS test watched, on the side that can actually leak here
+
+    // A binding that forgets to call monero_utils_free() leaks native memory that the heap of the JVM never sees,
+    // and every other test of this class stays green while it grows. Like the RSS test of the python suite, this
+    // one loops a bounded batch of calls, forces a steady state, and asserts that the memory of the process stays
+    // roughly flat
+    @Test
+    fun testSerializationLoopDoesNotLeakNativeMemory() {
+        val small = mapOf("heights" to listOf(111, 222, 333))
+        val large = mapOf("msg" to (1..100).joinToString("") { "${config.serialization.msg}\n" })
+        fun runBatch(rounds: Int) {
+            repeat(rounds) {
+                MoneroUtils.binaryToDict(MoneroUtils.dictToBinary(small))
+                MoneroUtils.binaryToDict(MoneroUtils.dictToBinary(large))
+            }
+        }
+
+        // unmeasured warmup: the JVM compiles the loop while it runs, and its heap and the native allocators grow
+        // to their steady state, which takes longer to absorb than the one-time growth the python test warms away
+        runBatch(10_000)
+        System.gc()
+        val before = physicalMemoryKb()
+        if (before == null) {
+            assumeTrue(false, "the physical memory of the process cannot be read on this platform")
+            return
+        }
+
+        // measured: each round trip holds a native buffer from json_to_binary() and a native string from
+        // binary_to_json(), for both maps, which the binding must give back
+        val rounds = 25_000
+        runBatch(rounds)
+        System.gc()
+        val after = physicalMemoryKb()!!
+
+        val growthMb = (after - before) / 1024.0
+        // generous bound: a binding that never frees holds back the JSON string of the large map, about 14 KB per
+        // round trip, which is ~315 MB for the 25,000 round trips measured here, an order of magnitude above the
+        // ~35 MB that the settling of the JVM grows by. This only needs to rule out that magnitude of leak, not
+        // pin the settling down
+        assertTrue(growthMb < 128, "Memory grew by $growthMb MB after $rounds serialization round trips -- possible native leak")
+    }
+
+    // A C bool is one byte: the ABI puts a returned one in the low byte of the register alone, and a passed one is
+    // 0 or 1. JNA on its own marshals a Boolean as a 32-bit number, which reads the bits that the ABI leaves
+    // undefined and writes a true parameter as -1, so the library maps its Booleans through the one-byte
+    // BooleanTypeMapper of MoneroNative. This test loads the library a second time through declarations that map
+    // the bools to a byte directly, and asserts that the two mappings agree. They stop agreeing the day either
+    // side of the bridge stops honoring the one-byte contract, which is the shape of bug that only shows on some
+    // platforms
+    @Test
+    fun testBoolMarshallingMatchesOneByteAbi() {
+        val probe = boolProbe
+
+        // every address of the fixture, and then some, on every network: the Boolean mapping of the library and
+        // the one-byte mapping of the probe must agree
+        val addresses = ArrayList<String?>()
+        for (book in listOf(config.mainnet, config.testnet, config.stagenet)) {
+            addresses.addAll(listOf(book.primaryAddress1, book.primaryAddress2, book.primaryAddress3, book.subaddress1, book.subaddress2, book.subaddress3, book.integrated1, book.integrated2, book.integrated3, book.invalid1, book.invalid2, book.invalid3))
+        }
+        addresses.addAll(listOf<String?>(null, "", "not an address"))
+        for (networkType in listOf(MoneroNetworkType.MAINNET, MoneroNetworkType.TESTNET, MoneroNetworkType.STAGENET)) {
+            for (address in addresses) {
+                val asByte = probe.monero_utils_is_valid_address(address, networkType.ordinal) != 0.toByte()
+                assertEquals(asByte, MoneroUtils.isValidAddress(address, networkType), "the Boolean mapping and the one-byte mapping of isValidAddress($address, $networkType) disagree")
+            }
+        }
+
+        // a by-value bool parameter crosses the bridge on the daemon calls, where JNA writes a Boolean as -1. A
+        // daemon that cannot be reached parses all of its arguments before it fails at the network, so the Boolean
+        // parameter of the library and the byte parameter of the probe must fail the same way, with the same error
+        val connection = PointerByReference()
+        MoneroNative.ok(MoneroNative.lib.monero_rpc_connection_create("""{"uri":"http://127.0.0.1:9/"}""", connection))
+        val daemon = PointerByReference()
+        try {
+            MoneroNative.ok(MoneroNative.lib.monero_daemon_connect_with(connection.value!!, daemon))
+            val hashes = arrayOf("a".repeat(64))
+            for (prune in listOf(true, false)) {
+                val asBoolean = assertFailsWith<MoneroError> { MoneroNative.ok(MoneroNative.lib.monero_daemon_get_txs(daemon.value!!, hashes, SizeT(1), prune, PointerByReference())) }.message
+                val asByte = assertFailsWith<MoneroError> { MoneroNative.ok(probe.monero_daemon_get_txs(daemon.value!!, hashes, SizeT(1), (if (prune) 1 else 0).toByte(), PointerByReference())) }.message
+                assertEquals(asByte, asBoolean, "the Boolean mapping and the one-byte mapping of the prune parameter (prune=$prune) disagree")
+            }
+        } finally {
+            MoneroNative.lib.monero_daemon_free(daemon.value)
+            MoneroNative.lib.monero_rpc_connection_free(connection.value)
+        }
+    }
 
     // the helpers of the python tests, which these tests mirror
 
@@ -926,6 +1061,56 @@ class MoneroUtilsTest {
     private fun testInvalidPublicSpendKey(publicSpendKey: String?) {
         val e = assertFailsWith<MoneroError>(publicSpendKey) { MoneroUtils.validatePublicSpendKey(publicSpendKey) }
         assertTrue(e.message!!.contains("public spend key expected to be 64 hex characters"), e.message)
+    }
+
+    // The physical memory of this process in kilobytes. On macOS this is the physical footprint that vmmap
+    // reports, which counts the pages that the memory compressor of the system has taken out of the resident set:
+    // a leak of cold pages, which a leaked native string is, disappears from the resident set without it. On
+    // Linux, and anywhere else without vmmap, this is the resident set that ps reports. Null when the platform
+    // has no way to read it, which skips the test that needs it
+    private fun physicalMemoryKb(): Long? {
+        val pid = ProcessHandle.current().pid().toString()
+        try {
+            val vmmap = ProcessBuilder("vmmap", "--summary", pid).start()
+            val summary = vmmap.inputStream.readAllBytes().decodeToString()
+            vmmap.waitFor()
+            val footprint = summary.lineSequence().firstOrNull { it.contains("Physical footprint:") }
+            val size = footprint?.substringAfter("Physical footprint:")?.trim()
+            val number = size?.takeWhile { it.isDigit() || it == '.' }?.toDoubleOrNull()
+            if (number != null) {
+                return when {
+                    size!!.contains('G') -> (number * 1024 * 1024).toLong()
+                    size.contains('M') -> (number * 1024).toLong()
+                    size.contains('K') -> number.toLong()
+                    else -> (number / 1024).toLong()
+                }
+            }
+        } catch (e: IOException) {
+            // no vmmap on this platform: the resident set is what is left
+        }
+        return try {
+            val ps = ProcessBuilder("ps", "-o", "rss=", "-p", pid).start()
+            ps.inputStream.readAllBytes().decodeToString().trim().toLongOrNull()
+        } catch (e: IOException) {
+            null
+        }
+    }
+
+    /**
+     * Declarations of the two functions whose C bools cross the bridge, mapped to a byte, which is the size the ABI
+     * defines for them: a returned bool is in the low byte of the register alone, and a passed one is 0 or 1. The
+     * probe is loaded beside the Boolean mapping of the library, and the test checks the two against each other.
+     */
+    @Suppress("FunctionName")
+    private interface BoolByteProbe : Library {
+        fun monero_utils_is_valid_address(address: String?, networkType: Int): Byte
+        fun monero_daemon_get_txs(daemon: Pointer, txHashes: Array<String>, numTxHashes: SizeT, prune: Byte, json: PointerByReference): Int
+    }
+
+    // the probe of the one-byte bool mapping, loaded from the same library as the Boolean mapping of MoneroC
+    private val boolProbe: BoolByteProbe by lazy {
+        val path = System.getProperty(MoneroNative.LIBRARY_PROPERTY) ?: System.getenv(MoneroNative.LIBRARY_ENVIRONMENT) ?: "monero_c"
+        Native.load(path, BoolByteProbe::class.java, mapOf(Library.OPTION_STRING_ENCODING to "UTF-8"))
     }
 
     /**
