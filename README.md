@@ -98,6 +98,10 @@ cd monero-kotlin
 
 The jar is in `build/libs`. The build does not need monero-c, so it does not need the submodule: `external/monero-c` is [monero-c](https://github.com/libmonero/monero-c), the C library that `MoneroDaemonRpc` calls.
 
+## Downloading monero-c
+
+The [releases of monero-c](https://github.com/libmonero/monero-c/releases) have the library of every platform: Linux (x86_64 and arm64), Windows and macOS (arm64 and x86_64). Download the archive of your platform and unpack it: the library is `libmonero_c.so`, `libmonero_c.dylib` or `libmonero_c.dll` in the directory of the archive, which also has the libraries that it needs, e.g. libusb.
+
 ## Building monero-c from source
 
 ### Linux and macOS
