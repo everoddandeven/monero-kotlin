@@ -13,7 +13,8 @@ import com.sun.jna.ptr.PointerByReference
 /**
  * Declarations of the functions of monero-c. No logic: results, memory and JSON are handled by the layers above.
  *
- * A C bool is one byte, so the outputs and the optional inputs that are bools are bytes. An optional input is null when it is not given.
+ * A C bool is one byte, so the outputs and the optional inputs that are bools are bytes, and MoneroNative maps the
+ * Boolean parameters and the Boolean returns to that byte with its type mapper. An optional input is null when it is not given.
  */
 @Suppress("FunctionName")
 internal interface MoneroC : Library {
