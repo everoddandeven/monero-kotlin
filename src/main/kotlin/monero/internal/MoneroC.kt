@@ -30,6 +30,56 @@ internal interface MoneroC : Library {
 
     fun monero_utils_atomic_units_to_xmr(atomicUnits: Long): Double
 
+    fun monero_utils_is_valid_address(address: String?, networkType: Int): Boolean
+
+    fun monero_utils_is_valid_private_view_key(privateViewKey: String?): Boolean
+
+    fun monero_utils_is_valid_private_spend_key(privateSpendKey: String?): Boolean
+
+    fun monero_utils_is_valid_public_view_key(publicViewKey: String?): Boolean
+
+    fun monero_utils_is_valid_public_spend_key(publicSpendKey: String?): Boolean
+
+    fun monero_utils_is_valid_payment_id(paymentId: String?): Boolean
+
+    fun monero_utils_is_valid_mnemonic(mnemonic: String?, language: String?): Boolean
+
+    fun monero_utils_is_valid_language(language: String?): Boolean
+
+    fun monero_utils_validate_address(address: String?, networkType: Int): Int
+
+    fun monero_utils_validate_private_view_key(privateViewKey: String?): Int
+
+    fun monero_utils_validate_private_spend_key(privateSpendKey: String?): Int
+
+    fun monero_utils_validate_public_view_key(publicViewKey: String?): Int
+
+    fun monero_utils_validate_public_spend_key(publicSpendKey: String?): Int
+
+    fun monero_utils_validate_payment_id(paymentId: String?): Int
+
+    fun monero_utils_validate_mnemonic(mnemonic: String?, language: String?): Int
+
+    fun monero_utils_get_integrated_address(networkType: Int, standardAddress: String, paymentId: String?, json: PointerByReference): Int
+
+    fun monero_utils_get_payment_uri(txConfigJson: String, networkType: Int, uri: PointerByReference): Int
+
+    fun monero_utils_parse_payment_uri(uri: String, networkType: Int, json: PointerByReference): Int
+
+    fun monero_utils_json_to_binary(json: String, data: PointerByReference, count: Pointer): Int
+
+    fun monero_utils_binary_to_json(data: ByteArray, length: SizeT, json: PointerByReference): Int
+
+    fun monero_utils_is_valid_payment_id_long(paymentId: String?): Boolean
+
+    fun monero_utils_is_valid_payment_id_short(paymentId: String?): Boolean
+
+    fun monero_utils_validate_payment_id_long(paymentId: String?): Int
+
+    fun monero_utils_validate_payment_id_short(paymentId: String?): Int
+
+    fun monero_utils_get_ring_size(): Int
+
     // rpc connection
 
     fun monero_rpc_connection_create(connectionJson: String, out: PointerByReference): Int

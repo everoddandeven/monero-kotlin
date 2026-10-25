@@ -151,6 +151,19 @@ internal object MoneroNative {
     }
 
     /**
+     * Read the bytes that a call returned, and free them.
+     */
+    fun bytes(result: Int, out: PointerByReference, count: Pointer): ByteArray {
+        ok(result)
+        val ptr = out.value ?: return ByteArray(0)
+        try {
+            return ptr.getByteArray(0, size(count))
+        } finally {
+            lib.monero_utils_free(ptr)
+        }
+    }
+
+    /**
      * The value of an unsigned 64-bit number, such as a balance in atomic units, which a Long holds as a negative number when it
      * is bigger than Long.MAX_VALUE.
      */
