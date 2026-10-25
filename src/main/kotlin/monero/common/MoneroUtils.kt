@@ -266,9 +266,12 @@ object MoneroUtils {
      * @param txConfig is the configuration of the transaction to make the payment URI for
      * @param networkType is the network to format the address of the URI for
      * @return the payment URI
-     * @throws MoneroError if the configuration is not valid
+     * @throws MoneroError if the configuration is not valid, or an amount of it is not an unsigned 64-bit number
      */
     fun getPaymentUri(txConfig: MoneroTxConfig, networkType: MoneroNetworkType = MoneroNetworkType.MAINNET): String {
+        txConfig.destinations?.forEach { destination -> validateAmount(destination.amount) }
+        validateAmount(txConfig.fee)
+        validateAmount(txConfig.belowAmount)
         val out = PointerByReference()
         val uri = MoneroNative.text(lib.monero_utils_get_payment_uri(MoneroJson.serialize(txConfig), network(networkType), out), out)
         return uri ?: throw MoneroError("monero-c returned no payment URI")
@@ -289,10 +292,12 @@ object MoneroUtils {
 
     /**
      * Convert a JSON string to its binary form, which is the portable storage format of the binary RPC of a daemon.
+     * JSON that is not valid is not an error: monero-c reads it as an empty object, and this returns the binary form of
+     * that.
      *
      * @param json is the JSON to convert
      * @return the binary form of the JSON
-     * @throws MoneroError if the JSON is not valid
+     * @throws MoneroError if the JSON nests objects and arrays deeper than 64 levels
      */
     fun jsonToBinary(json: String): ByteArray {
         val out = PointerByReference()
@@ -301,11 +306,12 @@ object MoneroUtils {
     }
 
     /**
-     * Convert a binary form, which is the portable storage format of the binary RPC of a daemon, to its JSON.
+     * Convert a binary form, which is the portable storage format of the binary RPC of a daemon, to its JSON. A binary
+     * form that is not valid is not an error either: monero-c reads it as an empty object, and this returns the JSON of
+     * that.
      *
      * @param binary is the binary form to convert
      * @return the JSON of the binary form
-     * @throws MoneroError if the binary form is not valid
      */
     fun binaryToJson(binary: ByteArray): String {
         val out = PointerByReference()
@@ -318,18 +324,21 @@ object MoneroUtils {
      *
      * @param jsonMap is the map to convert
      * @return the binary form of the map
-     * @throws MoneroError if the JSON of the map is not valid
+     * @throws MoneroError if the map can not be written as JSON
      */
     fun dictToBinary(jsonMap: Map<String, Any>): ByteArray {
         return jsonToBinary(MoneroJson.serialize(jsonMap))
     }
 
     /**
-     * Convert a binary form to the map of its JSON.
+     * Convert a binary form to the map of its JSON. A binary form that is not valid reads as an empty object, as in
+     * binaryToJson. A whole number of the map comes back as the Int, the Long or the BigInteger that fits it, and a
+     * double that is a whole number comes back as a whole number too, so a map is equal to the one that it round trips
+     * to only when its numbers are Ints.
      *
      * @param binary is the binary form to convert
      * @return the map of the JSON of the binary form
-     * @throws MoneroError if the binary form is not valid
+     * @throws MoneroError if the JSON of the binary form can not be read as a map
      */
     fun binaryToDict(binary: ByteArray): Map<String, Any> {
         return MoneroJson.deserialize(binaryToJson(binary), object : TypeReference<Map<String, Any>>() {})
@@ -422,6 +431,13 @@ object MoneroUtils {
             }
         }
         return blocks
+    }
+
+    // the C reads an amount of a configuration as an unsigned 64-bit number, and it rejects one that is bigger with a message that names neither the field nor the value
+    private fun validateAmount(amount: BigInteger?) {
+        if (amount != null && (amount.signum() < 0 || amount.bitLength() > 64)) {
+            throw MoneroError("The amount in atomic units is not an unsigned 64-bit number: $amount")
+        }
     }
 
     // the version of the build, which build.gradle.kts also gives to its artifacts
