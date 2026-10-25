@@ -1,15 +1,29 @@
 package monero.common
 
+import com.fasterxml.jackson.core.type.TypeReference
 import com.sun.jna.ptr.LongByReference
+import com.sun.jna.ptr.PointerByReference
 import java.math.BigInteger
+import monero.daemon.model.MoneroBlock
+import monero.daemon.model.MoneroNetworkType
 import monero.internal.MoneroNative
+import monero.internal.SizeT
+import monero.wallet.model.MoneroIntegratedAddress
+import monero.wallet.model.MoneroOutputWallet
+import monero.wallet.model.MoneroTransfer
+import monero.wallet.model.MoneroTxConfig
+import monero.wallet.model.MoneroTxWallet
 
 /**
- * Collection of Monero utilities. They are run by monero-c, which is loaded on the first call.
+ * Collection of Monero utilities. The ones that need the code of Monero are run by monero-c, which is loaded on the
+ * first call; the others only walk the models of this library.
  */
 object MoneroUtils {
 
     private val lib get() = MoneroNative.lib
+
+    // monero-c numbers the networks with the values of the enumerated type
+    private fun network(networkType: MoneroNetworkType): Int = networkType.ordinal
 
     /**
      * Convert XMR to atomic units. 1 XMR is 10^12 atomic units, and the amount is rounded to the nearest one.
@@ -37,4 +51,379 @@ object MoneroUtils {
         }
         return lib.monero_utils_atomic_units_to_xmr(atomicUnits.toLong())
     }
+
+    /**
+     * Indicates if the given address is valid for the given network.
+     *
+     * @param address is the address to validate
+     * @param networkType is the network to validate the address against
+     * @return true if the address is valid, false otherwise
+     */
+    fun isValidAddress(address: String?, networkType: MoneroNetworkType): Boolean {
+        return lib.monero_utils_is_valid_address(address, network(networkType))
+    }
+
+    /**
+     * Validate the given address for the given network.
+     *
+     * @param address is the address to validate
+     * @param networkType is the network to validate the address against
+     * @throws MoneroError if the address is not valid for the network
+     */
+    fun validateAddress(address: String?, networkType: MoneroNetworkType) {
+        MoneroNative.ok(lib.monero_utils_validate_address(address, network(networkType)))
+    }
+
+    /**
+     * Indicates if the given private view key is valid.
+     *
+     * @param privateViewKey is the private view key to validate
+     * @return true if the private view key is valid, false otherwise
+     */
+    fun isValidPrivateViewKey(privateViewKey: String?): Boolean {
+        return lib.monero_utils_is_valid_private_view_key(privateViewKey)
+    }
+
+    /**
+     * Validate the given private view key.
+     *
+     * @param privateViewKey is the private view key to validate
+     * @throws MoneroError if the private view key is not valid
+     */
+    fun validatePrivateViewKey(privateViewKey: String?) {
+        MoneroNative.ok(lib.monero_utils_validate_private_view_key(privateViewKey))
+    }
+
+    /**
+     * Indicates if the given private spend key is valid.
+     *
+     * @param privateSpendKey is the private spend key to validate
+     * @return true if the private spend key is valid, false otherwise
+     */
+    fun isValidPrivateSpendKey(privateSpendKey: String?): Boolean {
+        return lib.monero_utils_is_valid_private_spend_key(privateSpendKey)
+    }
+
+    /**
+     * Validate the given private spend key.
+     *
+     * @param privateSpendKey is the private spend key to validate
+     * @throws MoneroError if the private spend key is not valid
+     */
+    fun validatePrivateSpendKey(privateSpendKey: String?) {
+        MoneroNative.ok(lib.monero_utils_validate_private_spend_key(privateSpendKey))
+    }
+
+    /**
+     * Indicates if the given public view key is valid.
+     *
+     * @param publicViewKey is the public view key to validate
+     * @return true if the public view key is valid, false otherwise
+     */
+    fun isValidPublicViewKey(publicViewKey: String?): Boolean {
+        return lib.monero_utils_is_valid_public_view_key(publicViewKey)
+    }
+
+    /**
+     * Validate the given public view key.
+     *
+     * @param publicViewKey is the public view key to validate
+     * @throws MoneroError if the public view key is not valid
+     */
+    fun validatePublicViewKey(publicViewKey: String?) {
+        MoneroNative.ok(lib.monero_utils_validate_public_view_key(publicViewKey))
+    }
+
+    /**
+     * Indicates if the given public spend key is valid.
+     *
+     * @param publicSpendKey is the public spend key to validate
+     * @return true if the public spend key is valid, false otherwise
+     */
+    fun isValidPublicSpendKey(publicSpendKey: String?): Boolean {
+        return lib.monero_utils_is_valid_public_spend_key(publicSpendKey)
+    }
+
+    /**
+     * Validate the given public spend key.
+     *
+     * @param publicSpendKey is the public spend key to validate
+     * @throws MoneroError if the public spend key is not valid
+     */
+    fun validatePublicSpendKey(publicSpendKey: String?) {
+        MoneroNative.ok(lib.monero_utils_validate_public_spend_key(publicSpendKey))
+    }
+
+    /**
+     * Indicates if the given mnemonic is valid.
+     *
+     * @param mnemonic is the mnemonic to validate
+     * @param language is the expected language of the mnemonic, or null to accept any language
+     * @return true if the mnemonic is valid, false otherwise
+     */
+    fun isValidMnemonic(mnemonic: String?, language: String? = null): Boolean {
+        return lib.monero_utils_is_valid_mnemonic(mnemonic, language)
+    }
+
+    /**
+     * Validate the given mnemonic.
+     *
+     * @param mnemonic is the mnemonic to validate
+     * @param language is the expected language of the mnemonic, or null to accept any language
+     * @throws MoneroError if the mnemonic is not valid
+     */
+    fun validateMnemonic(mnemonic: String?, language: String? = null) {
+        MoneroNative.ok(lib.monero_utils_validate_mnemonic(mnemonic, language))
+    }
+
+    /**
+     * Indicates if the given language is a language of a mnemonic.
+     *
+     * @param language is the language to validate
+     * @return true if the language is valid, false otherwise
+     */
+    fun isValidLanguage(language: String?): Boolean {
+        return lib.monero_utils_is_valid_language(language)
+    }
+
+    /**
+     * Indicates if the given payment id is valid.
+     *
+     * @param paymentId is the payment id to validate, as 16 or 64 hex characters
+     * @return true if the payment id is valid, false otherwise
+     */
+    fun isValidPaymentId(paymentId: String?): Boolean {
+        return lib.monero_utils_is_valid_payment_id(paymentId)
+    }
+
+    /**
+     * Validate the given payment id.
+     *
+     * @param paymentId is the payment id to validate, as 16 or 64 hex characters
+     * @throws MoneroError if the payment id is not valid
+     */
+    fun validatePaymentId(paymentId: String?) {
+        MoneroNative.ok(lib.monero_utils_validate_payment_id(paymentId))
+    }
+
+    /**
+     * Indicates if the given long payment id is valid.
+     *
+     * @param paymentId is the payment id to validate, as 64 hex characters
+     * @return true if the payment id is a valid long payment id, false otherwise
+     */
+    fun isValidPaymentIdLong(paymentId: String?): Boolean {
+        return lib.monero_utils_is_valid_payment_id_long(paymentId)
+    }
+
+    /**
+     * Validate the given long payment id.
+     *
+     * @param paymentId is the payment id to validate, as 64 hex characters
+     * @throws MoneroError if the payment id is not a valid long payment id
+     */
+    fun validatePaymentIdLong(paymentId: String?) {
+        MoneroNative.ok(lib.monero_utils_validate_payment_id_long(paymentId))
+    }
+
+    /**
+     * Indicates if the given short payment id is valid.
+     *
+     * @param paymentId is the payment id to validate, as 16 hex characters
+     * @return true if the payment id is a valid short payment id, false otherwise
+     */
+    fun isValidPaymentIdShort(paymentId: String?): Boolean {
+        return lib.monero_utils_is_valid_payment_id_short(paymentId)
+    }
+
+    /**
+     * Validate the given short payment id.
+     *
+     * @param paymentId is the payment id to validate, as 16 hex characters
+     * @throws MoneroError if the payment id is not a valid short payment id
+     */
+    fun validatePaymentIdShort(paymentId: String?) {
+        MoneroNative.ok(lib.monero_utils_validate_payment_id_short(paymentId))
+    }
+
+    /**
+     * Get an integrated address from a standard address and a payment id.
+     *
+     * @param networkType is the network of the address
+     * @param standardAddress is the standard address to integrate the payment id into
+     * @param paymentId is the payment id to integrate, or null to generate a random one
+     * @return the integrated address
+     * @throws MoneroError if the address is not valid for the network, or the payment id is not valid
+     */
+    fun getIntegratedAddress(networkType: MoneroNetworkType, standardAddress: String, paymentId: String? = null): MoneroIntegratedAddress {
+        val out = PointerByReference()
+        return MoneroNative.json(lib.monero_utils_get_integrated_address(network(networkType), standardAddress, paymentId, out), out, MoneroIntegratedAddress::class.java)
+    }
+
+    /**
+     * Create a payment URI from a configuration of a transaction, which has one destination.
+     *
+     * @param txConfig is the configuration of the transaction to make the payment URI for
+     * @param networkType is the network to format the address of the URI for
+     * @return the payment URI
+     * @throws MoneroError if the configuration is not valid
+     */
+    fun getPaymentUri(txConfig: MoneroTxConfig, networkType: MoneroNetworkType = MoneroNetworkType.MAINNET): String {
+        val out = PointerByReference()
+        val uri = MoneroNative.text(lib.monero_utils_get_payment_uri(MoneroJson.serialize(txConfig), network(networkType), out), out)
+        return uri ?: throw MoneroError("monero-c returned no payment URI")
+    }
+
+    /**
+     * Parse a payment URI into a configuration of a transaction.
+     *
+     * @param uri is the payment URI to parse
+     * @param networkType is the network to validate the address of the URI against
+     * @return the configuration of the transaction that the URI describes
+     * @throws MoneroError if the URI is not valid
+     */
+    fun parsePaymentUri(uri: String, networkType: MoneroNetworkType = MoneroNetworkType.MAINNET): MoneroTxConfig {
+        val out = PointerByReference()
+        return MoneroNative.json(lib.monero_utils_parse_payment_uri(uri, network(networkType), out), out, MoneroTxConfig::class.java)
+    }
+
+    /**
+     * Convert a JSON string to its binary form, which is the portable storage format of the binary RPC of a daemon.
+     *
+     * @param json is the JSON to convert
+     * @return the binary form of the JSON
+     * @throws MoneroError if the JSON is not valid
+     */
+    fun jsonToBinary(json: String): ByteArray {
+        val out = PointerByReference()
+        val count = MoneroNative.newSize()
+        return MoneroNative.bytes(lib.monero_utils_json_to_binary(json, out, count), out, count)
+    }
+
+    /**
+     * Convert a binary form, which is the portable storage format of the binary RPC of a daemon, to its JSON.
+     *
+     * @param binary is the binary form to convert
+     * @return the JSON of the binary form
+     * @throws MoneroError if the binary form is not valid
+     */
+    fun binaryToJson(binary: ByteArray): String {
+        val out = PointerByReference()
+        val json = MoneroNative.text(lib.monero_utils_binary_to_json(binary, SizeT(binary.size.toLong()), out), out)
+        return json ?: throw MoneroError("monero-c returned no JSON")
+    }
+
+    /**
+     * Convert a map to its binary form, which is the one of the JSON of the map.
+     *
+     * @param jsonMap is the map to convert
+     * @return the binary form of the map
+     * @throws MoneroError if the JSON of the map is not valid
+     */
+    fun dictToBinary(jsonMap: Map<String, Any>): ByteArray {
+        return jsonToBinary(MoneroJson.serialize(jsonMap))
+    }
+
+    /**
+     * Convert a binary form to the map of its JSON.
+     *
+     * @param binary is the binary form to convert
+     * @return the map of the JSON of the binary form
+     * @throws MoneroError if the binary form is not valid
+     */
+    fun binaryToDict(binary: ByteArray): Map<String, Any> {
+        return MoneroJson.deserialize(binaryToJson(binary), object : TypeReference<Map<String, Any>>() {})
+    }
+
+    /**
+     * Get the version of this library.
+     *
+     * @return the version of this library
+     */
+    fun getVersion(): String {
+        return VERSION
+    }
+
+    /**
+     * Get the ring size that the network enforces.
+     *
+     * @return the ring size
+     */
+    fun getRingSize(): Int {
+        return lib.monero_utils_get_ring_size()
+    }
+
+    /**
+     * Get the distinct blocks of the given transactions, in the order in which they are first seen. A transaction
+     * without a block, which is not confirmed, is put in a block without a height, which is shared with the other
+     * unconfirmed transactions.
+     *
+     * @param txs are the transactions to get the blocks of, which are put in the shared block when they have none
+     * @return the distinct blocks of the transactions
+     */
+    fun getBlocksFromTxs(txs: List<MoneroTxWallet>): List<MoneroBlock> {
+        val blocks = ArrayList<MoneroBlock>()
+        var unconfirmed: MoneroBlock? = null
+        for (tx in txs) {
+            val block = tx.block
+            if (block == null) {
+                val shared = unconfirmed ?: MoneroBlock().also { blocks.add(it) }
+                unconfirmed = shared
+                shared.txs = (shared.txs ?: emptyList()) + tx
+            } else if (!blocks.contains(block)) {
+                blocks.add(block)
+            }
+        }
+        return blocks
+    }
+
+    /**
+     * Get the distinct blocks of the transactions of the given transfers, in the order in which the transactions are
+     * first seen. A transaction without a block, which is not confirmed, is put in a block without a height, which is
+     * shared with the other unconfirmed transactions.
+     *
+     * @param transfers are the transfers to get the blocks of the transactions of, which are put in the shared block when they have none
+     * @return the distinct blocks of the transactions of the transfers
+     * @throws MoneroError if a transfer has no transaction
+     */
+    fun getBlocksFromTransfers(transfers: List<MoneroTransfer>): List<MoneroBlock> {
+        val blocks = ArrayList<MoneroBlock>()
+        var unconfirmed: MoneroBlock? = null
+        for (transfer in transfers) {
+            val tx = transfer.tx ?: throw MoneroError("Transfer has no tx")
+            val block = tx.block
+            if (block == null) {
+                val shared = unconfirmed ?: MoneroBlock().also { blocks.add(it) }
+                unconfirmed = shared
+                shared.txs = (shared.txs ?: emptyList()) + tx
+            } else if (!blocks.contains(block)) {
+                blocks.add(block)
+            }
+        }
+        return blocks
+    }
+
+    /**
+     * Get the distinct blocks of the transactions of the given outputs, in the order in which the transactions are
+     * first seen. Unlike the transactions and the transfers, the transaction of an output has to have a block: an
+     * output that is not confirmed is an error, not a block without a height.
+     *
+     * @param outputs are the outputs to get the blocks of the transactions of
+     * @return the distinct blocks of the transactions of the outputs
+     * @throws MoneroError if an output has no transaction, or its transaction has no block
+     */
+    fun getBlocksFromOutputs(outputs: List<MoneroOutputWallet>): List<MoneroBlock> {
+        val blocks = ArrayList<MoneroBlock>()
+        for (output in outputs) {
+            val tx = output.tx ?: throw MoneroError("Output has no tx")
+            val block = tx.block ?: throw MoneroError("Need to handle unconfirmed output")
+            if (!blocks.contains(block)) {
+                blocks.add(block)
+            }
+        }
+        return blocks
+    }
+
+    // the version of the build, which build.gradle.kts also gives to its artifacts
+    private const val VERSION = "0.1.0-SNAPSHOT"
 }
